@@ -1,8 +1,8 @@
 name: Trigger auto deployment for demo-container
 
-# env:
-#   AZURE_CONTAINER_APP_NAME: demo-container
-#   AZURE_GROUP_NAME: demo-container
+env:
+  AZURE_CONTAINER_APP_NAME: huggingface-azuer
+  AZURE_GROUP_NAME: myresourcegroup
 
 # When this action will be executed
 on:  
