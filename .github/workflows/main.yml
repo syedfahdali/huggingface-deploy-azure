@@ -3,39 +3,41 @@ name: Trigger auto deployment for demo-container
 env:
   AZURE_CONTAINER_APP_NAME: demo-container
   AZURE_GROUP_NAME: myresourcegroup
-  AZURE_CONTAINER_REGISTRY: mlopscookbook2.azurecr.io
-  RESOURCE_LOCATION: eastus  # change as needed
-  CONTAINER_PORT: 80         # change as needed
+  AZURE_CONTAINER_ENV: my-container-env # Make sure this exists
+  CONTAINER_PORT: 80
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ main ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout the repo
+      - name: Checkout source
         uses: actions/checkout@v2
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v1
 
-      - name: Log in to Azure Container Registry (ACR)
+      - name: Log in to GitHub Container Registry
         uses: docker/login-action@v1
         with:
-          registry: ${{ env.AZURE_CONTAINER_REGISTRY }}
-          username: ${{ secrets.ACR_USERNAME }}
-          password: ${{ secrets.ACR_PASSWORD }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.PAT }}
 
-      - name: Set repo env
-        run: echo "REPO=${GITHUB_REPOSITORY,,}" >>${GITHUB_ENV}
+      - name: Lowercase repo name
+        run: echo "REPO=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
 
-      - name: Build and push container image to ACR
+      - name: Build and push image to GHCR
         uses: docker/build-push-action@v2
         with:
+          context: .
           push: true
-          tags: ${{ env.AZURE_CONTAINER_REGISTRY }}/${{ env.REPO }}:${{ github.sha }}
+          tags: ghcr.io/${{ env.REPO }}:${{ github.sha }}
           file: ./Dockerfile
 
   deploy:
@@ -48,36 +50,33 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Set repo env
-        run: echo "REPO=${GITHUB_REPOSITORY,,}" >>${GITHUB_ENV}
-
       - name: Deploy to Azure Container App
         uses: azure/CLI@v1
         with:
           inlineScript: |
             az config set extension.use_dynamic_install=yes_without_prompt
 
-            echo "Checking if Container App exists..."
-            EXISTS=$(az containerapp show -n ${{ env.AZURE_CONTAINER_APP_NAME }} -g ${{ env.AZURE_GROUP_NAME }} --query "name" -o tsv || echo "")
-
-            if [ -z "$EXISTS" ]; then
-              echo "Creating Container App..."
-              az containerapp create \
-                --name ${{ env.AZURE_CONTAINER_APP_NAME }} \
-                --resource-group ${{ env.AZURE_GROUP_NAME }} \
-                --image ${{ env.AZURE_CONTAINER_REGISTRY }}/${{ env.REPO }}:${{ github.sha }} \
-                --target-port ${{ env.CONTAINER_PORT }} \
-                --environment <YOUR_CONTAINER_APP_ENV_NAME> \
-                --registry-server ${{ env.AZURE_CONTAINER_REGISTRY }} \
-                --registry-username ${{ secrets.ACR_USERNAME }} \
-                --registry-password ${{ secrets.ACR_PASSWORD }} \
-                --cpu 2 --memory 4Gi \
-                --location ${{ env.RESOURCE_LOCATION }} \
-                --ingress external
-            else
-              echo "Updating existing Container App..."
+            echo "Checking if container app exists..."
+            if az containerapp show --name $AZURE_CONTAINER_APP_NAME --resource-group $AZURE_GROUP_NAME &>/dev/null; then
+              echo "Updating existing container app..."
               az containerapp update \
-                -n ${{ env.AZURE_CONTAINER_APP_NAME }} \
-                -g ${{ env.AZURE_GROUP_NAME }} \
-                --image ${{ env.AZURE_CONTAINER_REGISTRY }}/${{ env.REPO }}:${{ github.sha }}
+                --name $AZURE_CONTAINER_APP_NAME \
+                --resource-group $AZURE_GROUP_NAME \
+                --image ghcr.io/${{ env.REPO }}:${{ github.sha }} \
+                --cpu 2 \
+                --memory 4Gi
+            else
+              echo "Creating new container app..."
+              az containerapp create \
+                --name $AZURE_CONTAINER_APP_NAME \
+                --resource-group $AZURE_GROUP_NAME \
+                --environment $AZURE_CONTAINER_ENV \
+                --image ghcr.io/${{ env.REPO }}:${{ github.sha }} \
+                --target-port $CONTAINER_PORT \
+                --ingress external \
+                --cpu 2 \
+                --memory 4Gi \
+                --registry-server ghcr.io \
+                --registry-username ${{ github.actor }} \
+                --registry-password ${{ secrets.PAT }}
             fi
