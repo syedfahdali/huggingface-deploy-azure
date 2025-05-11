@@ -5,7 +5,7 @@ name: Trigger auto deployment for demo-container
 #   AZURE_GROUP_NAME: demo-container
 
 # When this action will be executed
-on:
+on:  
   # Automatically trigger it when detected changes in repo. Remove comments to enable
   push:
    branches: 
